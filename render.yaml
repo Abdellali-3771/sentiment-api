@@ -2,7 +2,7 @@ services:
   - type: web
     name: sentiment-api
     env: python
-    version: 3.10
+    version: 3.12.3
     buildCommand: pip install -r requirements.txt
     startCommand: bash start.sh
     plan: free
