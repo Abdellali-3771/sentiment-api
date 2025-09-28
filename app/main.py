@@ -27,8 +27,7 @@ from pydantic import BaseModel, Field, validator
 
 import mlflow
 import mlflow.keras
-from google.cloud import monitoring_v3
-from google.cloud import logging as gcp_logging
+
 
 # Configuration logging
 logging.basicConfig(
@@ -41,19 +40,11 @@ logger = logging.getLogger(__name__)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Réduire les logs TensorFlow
 tf.get_logger().setLevel('ERROR')
 
-# Configuration MLflow avec désactivation pour production
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
-if ENVIRONMENT == "production":
-    MLFLOW_AVAILABLE = False
-    logger.info("🚫 MLflow désactivé en production")
-else:
-    try:
-        os.environ.setdefault("MLFLOW_TRACKING_URI", "http://localhost:5000")
-        mlflow.set_experiment("air_paradis_sentiment_production")
-        MLFLOW_AVAILABLE = True
-    except Exception as e:
-        logger.warning(f"⚠️ MLflow non disponible: {e}")
-        MLFLOW_AVAILABLE = False
+# Configuration MLflow - toujours désactivé sur Render
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+MLFLOW_AVAILABLE = False
+logger.info("🚫 MLflow désactivé (Render)")
+
 
 # Configuration Google Cloud
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "air-paradis-sentiment-api")
@@ -904,4 +895,5 @@ async def receive_frontend_logs(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
