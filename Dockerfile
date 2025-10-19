@@ -32,17 +32,12 @@ RUN pip install --no-cache-dir tensorflow==2.16.1
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ============================================
-# 4️⃣ Copier le code source + modèles
+# 4️⃣ Copier le code source uniquement
 # ============================================
-# Copie ton code FastAPI et ton modèle
 COPY app ./app
-COPY models ./models
 
-# Vérification du contenu du dossier models
-RUN echo "🔍 Vérification du contenu du dossier models :" && \
-    ls -lh ./models && \
-    echo "📊 Taille totale des modèles :" && \
-    du -sh ./models
+# Vérification du contenu du dossier app
+RUN echo "📂 Contenu du dossier app :" && ls -lh ./app
 
 # ============================================
 # 5️⃣ Créer un utilisateur non-root (sécurité)
@@ -63,7 +58,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # ============================================
-# 8️⃣ Commande de démarrage avec timeouts étendus
+# 8️⃣ Commande de démarrage
 # ============================================
-# IMPORTANT: Utiliser exec form sans backslash pour éviter les erreurs
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8080 --timeout-keep-alive 300 --workers 1 --log-level info"]
