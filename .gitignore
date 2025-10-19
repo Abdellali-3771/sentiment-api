@@ -1,0 +1,8 @@
+# Ignore model weights
+models/*.h5
+models/*.pickle
+
+# Ignore temporary files
+__pycache__/
+*.pyc
+.env
