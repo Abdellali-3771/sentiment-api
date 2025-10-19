@@ -49,11 +49,14 @@ jobs:
         run: pytest || echo "⚠️ Tests failed or skipped, continuing deployment"
 
       # ✅ Étape 5 : Build Docker & push vers Artifact Registry
-      - name: 🐳 Build Docker image
+      - name: Build Docker image
         run: |
-          IMAGE="europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/containers/${{ secrets.GCP_SERVICE_NAME }}:latest"
-          echo "🔨 Building Docker image: $IMAGE"
-          gcloud builds submit --tag "$IMAGE"
+          IMAGE="europe-west1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/containers/${{ github.event.repository.name }}:latest"
+          gcloud builds submit \
+            --tag $IMAGE \
+            --gcs-log-dir=gs://${{ env.GCP_PROJECT_ID }}-cloudbuild-logs/logs \
+            --logging=GCS_ONLY
+
 
       # ✅ Étape 6 : Déploiement automatique sur Cloud Run
       - name: 🚀 Deploy to Cloud Run
