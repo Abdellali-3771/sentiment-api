@@ -55,7 +55,6 @@ jobs:
           gcloud builds submit \
             --tag $IMAGE \
             --gcs-log-dir=gs://${{ env.GCP_PROJECT_ID }}-cloudbuild-logs/logs \
-            --logging=GCS_ONLY
 
 
       # ✅ Étape 6 : Déploiement automatique sur Cloud Run
