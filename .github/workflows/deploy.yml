@@ -14,27 +14,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ✅ Étape 1 : Récupération du dépôt
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      # ✅ Étape 1 : Authentification Google Cloud (nouvelle méthode officielle)
+      # ✅ Étape 2 : Authentification Google Cloud (méthode officielle)
       - name: 🔐 Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # ✅ Étape 2 : Installation du SDK Google Cloud
+      # ✅ Étape 3 : Installation du SDK Google Cloud
       - name: 🔧 Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          project_id: ${{ env.PROJECT_ID }}
           install_components: 'beta'
 
-      # ✅ Étape 3 : Configuration du projet
+      # ✅ Étape 4 : Configuration du projet
       - name: 🧭 Configure GCP project
-        run: gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+        run: gcloud config set project ${{ env.PROJECT_ID }}
 
-      # ✅ Étape 4 : Préparation Python (pour tests unitaires)
+      # ✅ Étape 5 : Préparation Python (pour tests unitaires)
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
@@ -48,35 +49,35 @@ jobs:
       - name: ✅ Run tests
         run: pytest || echo "⚠️ Tests failed or skipped, continuing deployment"
 
-      # ✅ Étape 5 : Build Docker & push vers Artifact Registry
-      - name: Build Docker image
+      # ✅ Étape 6 : Build Docker & push vers Artifact Registry
+      - name: 🧱 Build Docker image
         run: |
-          IMAGE="europe-west1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/containers/${{ github.event.repository.name }}:latest"
+          PROJECT_ID=${{ env.PROJECT_ID }}
+          IMAGE="europe-west1-docker.pkg.dev/$PROJECT_ID/containers/${{ github.event.repository.name }}:latest"
+          echo "🏗️ Building Docker image: $IMAGE"
           gcloud builds submit \
             --tag $IMAGE \
-            --gcs-log-dir=gs://${{ env.GCP_PROJECT_ID }}-cloudbuild-logs/logs \
+            --gcs-log-dir=gs://$PROJECT_ID-cloudbuild-logs/logs
 
-
-      # ✅ Étape 6 : Déploiement automatique sur Cloud Run
+      # ✅ Étape 7 : Déploiement automatique sur Cloud Run
       - name: 🚀 Deploy to Cloud Run
         run: |
-          IMAGE="europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/containers/${{ secrets.GCP_SERVICE_NAME }}:latest"
-          echo "🚀 Deploying $IMAGE to Cloud Run..."
-          gcloud run deploy ${{ secrets.GCP_SERVICE_NAME }} \
-            --image "$IMAGE" \
-            --region ${{ secrets.GCP_REGION }} \
+          PROJECT_ID=${{ env.PROJECT_ID }}
+          IMAGE="europe-west1-docker.pkg.dev/$PROJECT_ID/containers/${{ github.event.repository.name }}:latest"
+          echo "🚀 Deploying image $IMAGE to Cloud Run..."
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image $IMAGE \
+            --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --memory=2Gi \
-            --timeout=900 \
-            --set-env-vars ENVIRONMENT=production,GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }},GOOGLE_CLOUD_REGION=${{ secrets.GCP_REGION }}
+            --memory 2Gi \
+            --timeout 900
 
-      # ✅ Étape 7 : Vérification automatique du déploiement
+      # ✅ Étape 8 : Vérification du déploiement
       - name: 🔍 Verify deployment health
         run: |
-          SERVICE_URL=$(gcloud run services describe ${{ secrets.GCP_SERVICE_NAME }} \
-            --region ${{ secrets.GCP_REGION }} \
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
             --format 'value(status.url)')
           echo "🌍 Checking health endpoint at $SERVICE_URL/health"
           curl -f "$SERVICE_URL/health" || (echo "❌ Health check failed" && exit 1)
-
