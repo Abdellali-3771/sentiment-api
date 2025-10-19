@@ -51,3 +51,4 @@ mlflow==3.3.1
 google-cloud-monitoring
 google-cloud-core
 google-cloud-logging
+uvicorn

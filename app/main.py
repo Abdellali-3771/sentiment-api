@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field, validator
 
 import mlflow
 import mlflow.keras
-
+from google.cloud import monitoring_v3
+from google.cloud import logging as gcp_logging
 
 # Configuration logging
 logging.basicConfig(
@@ -40,14 +41,22 @@ logger = logging.getLogger(__name__)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Réduire les logs TensorFlow
 tf.get_logger().setLevel('ERROR')
 
-# Configuration MLflow - toujours désactivé sur Render
-ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
-MLFLOW_AVAILABLE = False
-logger.info("🚫 MLflow désactivé (Render)")
-
+# Configuration MLflow avec désactivation pour production
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+if ENVIRONMENT == "production":
+    MLFLOW_AVAILABLE = False
+    logger.info("🚫 MLflow désactivé en production")
+else:
+    try:
+        os.environ.setdefault("MLFLOW_TRACKING_URI", "http://localhost:5000")
+        mlflow.set_experiment("air_paradis_sentiment_production")
+        MLFLOW_AVAILABLE = True
+    except Exception as e:
+        logger.warning(f"⚠️ MLflow non disponible: {e}")
+        MLFLOW_AVAILABLE = False
 
 # Configuration Google Cloud
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "air-paradis-sentiment-api")
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "projet-app-sentiment")
 REGION = os.getenv("GOOGLE_CLOUD_REGION", "europe-west1")
 
 # Variables globales pour le modèle
@@ -96,9 +105,16 @@ class ModelManager:
         self.model = None
         self.tokenizer = None
         self.config = None
-        self.model_path = "models/best_advanced_model_BiLSTM_Word2Vec.h5"
-        self.tokenizer_path = "models/best_advanced_model_tokenizer.pickle"
-        self.config_path = "models/best_advanced_model_config.pickle"
+
+        # Base directory du fichier courant : /app/app
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Dossier models situé à la racine du projet Docker (/app/models)
+        model_dir = os.path.join(base_dir, "..", "models")
+
+        self.model_path = os.path.join(model_dir, "best_advanced_model_BiLSTM_Word2Vec.h5")
+        self.tokenizer_path = os.path.join(model_dir, "best_advanced_model_tokenizer.pickle")
+        self.config_path = os.path.join(model_dir, "best_advanced_model_config.pickle")
         self.is_dummy_model = False
         self.tokenizer_type = "dummy"  # Valeur par défaut pour éviter les erreurs
         
@@ -126,14 +142,10 @@ class ModelManager:
             await self._test_model()
             
         except Exception as e:
-            logger.error(f"❌ Erreur critique lors du chargement: {str(e)}")
-            # Fallback complet vers modèle factice
-            self.model = self._create_compatible_dummy_model()
-            self.tokenizer = self._create_dummy_tokenizer()
-            self.config = {"max_sequence_length": MAX_SEQUENCE_LENGTH}
-            self.is_dummy_model = True
-            self.tokenizer_type = "dummy"
-            logger.info("🎭 Fallback vers modèle factice complet")
+            logger.error(f"❌ Erreur critique lors du chargement du modèle réel: {str(e)}")
+            #🚫 Supprime le fallback automatique pour éviter les prédictions erronées
+            raise RuntimeError("Échec du chargement du modèle TensorFlow réel — vérifie la présence des fichiers .h5 et .pickle dans /models")
+
     
     async def _download_models_if_needed(self):
         """Télécharge les modèles depuis Google Cloud Storage si nécessaire"""
@@ -471,7 +483,17 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Démarrage de l'API Air Paradis Sentiment Analysis")
     logger.info(f"🔧 TensorFlow version: {tf.__version__}")
     logger.info(f"📊 MLflow disponible: {MLFLOW_AVAILABLE}")
-    await model_manager.load_model()
+    
+    # ✅ PRÉ-CHARGER LE MODÈLE AU DÉMARRAGE (pas au premier appel)
+    try:
+        logger.info("📥 Pré-chargement du modèle au démarrage...")
+        await model_manager.load_model()
+        logger.info("✅ Modèle chargé avec succès")
+    except Exception as e:
+        logger.error(f"❌ Erreur critique au chargement du modèle: {e}")
+        # NE PAS raise ici pour permettre au health check de répondre
+        # Le modèle sera rechargé à la première requête
+    
     logger.info("✅ API prête à recevoir des requêtes")
     yield
     # Shutdown
@@ -609,8 +631,9 @@ async def health_check():
     model_loaded = model_manager.model is not None and model_manager.tokenizer is not None
     model_type = "factice" if model_manager.is_dummy_model else "réel"
     
+    # ✅ TOUJOURS retourner 200 OK pour Cloud Run
     return HealthResponse(
-        status="healthy" if model_loaded else "unhealthy",
+        status="healthy",  # ⚠️ Ne jamais retourner "unhealthy" sinon Cloud Run tue le conteneur
         model_loaded=model_loaded,
         model_type=model_type,
         tokenizer_type=model_manager.tokenizer_type,
@@ -630,6 +653,12 @@ async def predict_sentiment(
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="Le texte ne peut pas être vide")
         
+        # Si le modèle n'est pas encore chargé, on le charge maintenant
+        if model_manager.model is None or model_manager.tokenizer is None:
+            logger.info("🔹 Chargement du modèle à la première requête /predict...")
+            await model_manager.load_model()  # ✅ chargement réel du modèle ici
+            logger.info("✅ Modèle chargé avec succès")
+
         # Prédiction
         result = await model_manager.predict(request.text)
         
@@ -647,9 +676,11 @@ async def predict_sentiment(
         error_msg = f"Erreur lors de la prédiction: {str(e)}"
         logger.error(f"❌ {error_msg}")
         
+        # Envoi asynchrone de l'erreur vers la solution de monitoring
         background_tasks.add_task(send_error_to_monitoring, error_msg, request.text)
         
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
 
 @app.post("/feedback")
 async def submit_feedback(
@@ -892,8 +923,17 @@ async def receive_frontend_logs(
             detail="Erreur lors du traitement du log"
         )
 
-
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+    # Récupérer le port de Cloud Run (défaut: 8080)
+    port = int(os.getenv("PORT", 8080))
+    
+    logger.info(f"🚀 Démarrage de l'API sur le port {port}")
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",  # Important pour Cloud Run
+        port=port,
+        log_level="info"
+    )
